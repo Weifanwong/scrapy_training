@@ -1,0 +1,89 @@
+本次的内容是对刚刚完成的对豆瓣网top250的电影进行爬虫实战的记录。
+
+我利用的是scrapy框架进行爬虫训练。
+首先，选定工程目录创建第一个项目:
+scrapy startproject movie
+这样scrapy框架就会自动创建一个movie目录，其中有一些基本的配置文件
+打开spider文件，在这里创建我们的第一个爬虫程序moviespider.py
+回到movie文件目录下，打开items.py，在这个文件中我们将定义自己将要爬取的数据类型：
+#items.py
+import scrapy
+from scrapy import Item,Field
+
+
+class MovieItem(scrapy.Item):
+   title = Field()
+   #movieinfo = Field()
+   people = Field()
+   tag = Field()
+   star = Field()
+   quote = Field()
+
+根据需求我们依次设置了title、people、tag、star、quote五种数据类型。
+
+接下来进入到moviespider.py开始编写我们的第一个爬虫程序。
+#moviespider.py
+#首先要制定爬虫的名字以及开始爬取的网站：
+    name = 'movie'
+    start_url = ["https://movie.douban.com/top250"]
+#然后定义一个start_requests请求，这里是因为豆瓣网有反爬虫机制，我们需要“伪装”自己是访问该网站的正常游客
+    def start_requests(self):
+        yield scrapy.Request("https://movie.douban.com/top250",
+                      headers={'User-Agent': "your agent string"})
+                 
+#编写parse函数：
+    def parse(self, response):
+        item = MovieItem()
+        #url =["https://movie.douban.com/top250"]
+        #selector = Selector(response)
+        movies = response.xpath('//div[@class="info"]')
+        for movie in movies:
+            title = movie.xpath('./div[@class="hd"]/a/span/text()').extract()
+            fulltitle = ''
+            for each in title:
+                fulltitle += each
+            people = movie.xpath('./div[@class="bd"]/p/text()').extract()[0]
+            tag = movie.xpath('./div[@class="bd"]/p/text()').extract()[1]
+            star = movie.xpath('./div[@class="bd"]/div/span[@class="rating_num"]/text()').extract()
+            quote = movie.xpath('./div[@class="bd"]/p[@class="quote"]/span/text()').extract()
+            item['title']=''.join(fulltitle.split())
+            #item['movieinfo']=''.join(movieinfo[0].split()+movieinfo[1].split())
+            #item['people']=''.join(people.split())
+            item['people']=''.join(people.split()).replace('主演','   主演')
+            item['tag']=''.join(tag.split())
+            item['star']=star
+            item['quote']=quote
+            yield item
+            
+#最后为了正常爬取下一页面，需要在parse中在此发起一次请求，并将请求过后的回调函数再次指向sparse（很像一个递归）
+        nextPage = response.xpath('//span[@class="next"]/link/@href').extract()
+        if nextPage:
+            nextPage = nextPage[0]
+            #print(self.url + str(nextPage))
+            yield scrapy.Request(self.url + str(nextPage), headers={'User-Agent': "your agent string"},callback=self.parse)
+            
+至此我们已经编写了第一个爬虫程序，在命令行中进入该项目的根目录movie，输入:
+scrapy crawl movie
+即可开始爬虫
+
+如何实现数据的存储？我们说需要通过pipelines.py文件来实现，实际上，只要我们声明了pipeline函数，爬虫程序每次调用yield来输出爬取数据的时候，
+都会自动转向该爬虫程序对应的pipeline函数，在该函数中可以进一步对数据进行存储、删减等操作。
+
+#pipelines.py
+
+import pymongo
+from pymongo import MongoClient
+from scrapy.exceptions import DropItem
+
+#连接我们的mongo数据库
+conn=pymongo.MongoClient('127.0.0.1',27017)
+db = conn.wwf_database01
+myset = db.movieranking
+
+
+class MoviePipeline(object):
+    def process_item(self, item, spider):
+        if item['title']:
+            myset.insert({"title":item['title'],"people":item['people'],  #insert到表格中
+            	"tag":item['tag'],"star":item['star'],"quote":item['quote']})
+        return item
